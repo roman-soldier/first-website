@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Catch Orbit</title>
+  <style>
+    :root {
+      --bg: #0a1020;
+      --surface: #121a2e;
+      --fg: #e8eef8;
+      --muted: #8b97ad;
+      --primary: #ff4d6d;
+      --accent: #3ee0c8;
+      --border: #243049;
+      --gold: #f4c95d;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: "Segoe UI", system-ui, sans-serif;
+      overflow: hidden;
+    }
+    body { display: flex; flex-direction: column; min-height: 100dvh; }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 20px;
+    }
+    h1 { font-size: 1.15rem; letter-spacing: -0.02em; }
+    .sub { font-size: 0.75rem; color: var(--muted); margin-top: 2px; }
+    .icon-btn {
+      width: 44px; height: 44px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--fg);
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 18px;
+    }
+    .hud {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: min(100%, 32rem);
+      padding: 0 12px 10px;
+      font-size: 0.9rem;
+    }
+    .score { font-size: 1.6rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .combo { margin-left: 8px; font-size: 0.9rem; color: var(--accent); }
+    .lives { color: var(--primary); letter-spacing: 2px; }
+    .best { color: var(--muted); }
+    .wrap {
+      flex: 1;
+      min-height: 0;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 12px 16px;
+    }
+    canvas {
+      max-width: 100%;
+      max-height: 100%;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--surface);
+      touch-action: none;
+      box-shadow: 0 0 48px rgba(62, 224, 200, 0.08);
+    }
+    .overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    .card {
+      width: min(100%, 22rem);
+      background: rgba(18, 26, 46, 0.95);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 24px;
+      text-align: center;
+      backdrop-filter: blur(8px);
+    }
+    .card h2 { font-size: 1.8rem; margin-bottom: 8px; }
+    .card p { color: var(--muted); font-size: 0.9rem; line-height: 1.5; }
+    .card ul {
+      text-align: left;
+      color: var(--muted);
+      font-size: 0.9rem;
+      margin: 16px 0 0 1.1rem;
+      line-height: 1.6;
+    }
+    .play {
+      margin-top: 22px;
+      width: 100%;
+      height: 48px;
+      border: 0;
+      border-radius: 10px;
+      background: var(--primary);
+      color: var(--fg);
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .hidden { display: none; }
+    .kicker {
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .big { font-size: 2.4rem; font-weight: 800; margin: 4px 0 8px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Catch Orbit</h1>
+      <p class="sub">Catch the orbs. Don’t let them fall.</p>
+    </div>
+    <button class="icon-btn" id="muteBtn" type="button" aria-label="Mute">♪</button>
+  </header>
+  <div class="hud">
+    <div class="lives" id="lives">♥ ♥ ♥</div>
+    <div class="score"><span id="score">0</span><span class="combo hidden" id="combo"></span></div>
+    <div class="best">Best <span id="best">0</span></div>
+  </div>
+  <div class="wrap" id="wrap">
+    <canvas id="game" width="480" height="640" aria-label="Catch Orbit playfield"></canvas>
+    <div class="overlay" id="overlay">
+      <div class="card" id="menuCard">
+        <h2>Catch Orbit</h2>
+        <p>Slide the paddle and snag falling orbs. Combos multiply your score. Three misses and the orbit collapses.</p>
+        <ul>
+          <li>A / D or arrows to move</li>
+          <li>Drag or slide on touch</li>
+          <li>Gold orbs are worth 5</li>
+        </ul>
+        <button class="play" id="playBtn" type="button">Play</button>
+      </div>
+      <div class="card hidden" id="overCard">
+        <p class="kicker">Orbit lost</p>
+        <p class="big" id="finalScore">0</p>
+        <p id="overMeta">Best combo 0 · High score 0</p>
+        <button class="play" id="againBtn" type="button">Play again</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    const WORLD_W = 480, WORLD_H = 640, FIXED_DT = 1 / 60, LIVES = 3, SAVE_KEY = "catch-orbit-v1";
+    const canvas = document.getElementById("game");
+    const wrap = document.getElementById("wrap");
+    const ctx = canvas.getContext("2d");
+    const overlay = document.getElementById("overlay");
+    const menuCard = document.getElementById("menuCard");
+    const overCard = document.getElementById("overCard");
+    const scoreEl = document.getElementById("score");
+    const comboEl = document.getElementById("combo");
+    const livesEl = document.getElementById("lives");
+    const bestEl = document.getElementById("best");
+    const muteBtn = document.getElementById("muteBtn");
+
+    let phase = "menu";
+    let best = 0;
+    try {
+      const raw = localStorage.getItem(SAVE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (typeof parsed.best === "number") best = parsed.best;
+      }
+    } catch (e) {}
+    bestEl.textContent = String(best);
+
+    const keys = new Set();
+    let pointerX = null;
+    let audioCtx = null, master = null, sfxBus = null, muted = false;
+
+    function unlockAudio() {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!audioCtx) {
+        audioCtx = new AC({ latencyHint: "interactive" });
+        master = audioCtx.createGain();
+        sfxBus = audioCtx.createGain();
+        sfxBus.gain.value = 0.35;
+        master.gain.value = muted ? 0 : 1;
+        sfxBus.connect(master);
+        master.connect(audioCtx.destination);
+      }
+      if (audioCtx.state === "suspended") audioCtx.resume();
+    }
+    function beep(freq, duration, type, gain, slide) {
+      if (!audioCtx || !sfxBus || muted) return;
+      const now = audioCtx.currentTime;
+      const osc = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, now);
+      if (slide) osc.frequency.exponentialRampToValueAtTime(Math.max(40, freq + slide), now + duration);
+      g.gain.setValueAtTime(0.0001, now);
+      g.gain.exponentialRampToValueAtTime(gain, now + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+      osc.connect(g); g.connect(sfxBus);
+      osc.start(now); osc.stop(now + duration + 0.02);
+      osc.onended = () => { osc.disconnect(); g.disconnect(); };
+    }
+    function sfxCatch(combo) {
+      const bump = Math.min(combo, 8) * 40;
+      beep(420 + bump, 0.12, "triangle", 0.35, 180);
+      beep(840 + bump, 0.08, "sine", 0.18, 80);
+    }
+    function sfxMiss() { beep(180, 0.28, "sawtooth", 0.22, -120); }
+    function sfxStart() { beep(330, 0.1, "square", 0.2, 220); beep(520, 0.16, "triangle", 0.18, 160); }
+    function sfxOver() { beep(240, 0.4, "triangle", 0.25, -160); }
+
+    function makeStars() {
+      const stars = [];
+      for (let i = 0; i < 70; i++) {
+        stars.push({ x: Math.random() * WORLD_W, y: Math.random() * WORLD_H, s: 0.4 + Math.random() * 1.6, tw: Math.random() * Math.PI * 2 });
+      }
+      return stars;
+    }
+    function freshSim() {
+      return {
+        paddleX: WORLD_W / 2 - 52, paddleW: 104, paddleTarget: WORLD_W / 2 - 52,
+        orbs: [], particles: [], stars: makeStars(), spawn: 0.6,
+        score: 0, combo: 0, bestCombo: 0, lives: LIVES, trauma: 0, hitstop: 0, elapsed: 0
+      };
+    }
+    let sim = freshSim();
+
+    function burst(x, y, hue, n) {
+      for (let i = 0; i < n; i++) {
+        const a = Math.random() * Math.PI * 2, sp = 40 + Math.random() * 180;
+        sim.particles.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: 0.35 + Math.random() * 0.4, max: 0.75, r: 1.5 + Math.random() * 2.5, hue });
+      }
+    }
+    function spawnOrb() {
+      const bonus = Math.random() < 0.12;
+      const r = bonus ? 16 : 9 + Math.random() * 8;
+      const speed = 140 + sim.elapsed * 8 + Math.random() * 50;
+      sim.orbs.push({
+        x: r + 12 + Math.random() * (WORLD_W - r * 2 - 24), y: -r - 8, r,
+        vy: Math.min(speed, 420), hue: bonus ? 42 : 348 + Math.random() * 18,
+        worth: bonus ? 5 : 1, pulse: Math.random() * Math.PI * 2
+      });
+    }
+    function renderLives() {
+      livesEl.textContent = Array.from({ length: LIVES }, (_, i) => i < sim.lives ? "♥" : "♡").join(" ");
+    }
+    function syncHud() {
+      scoreEl.textContent = String(sim.score);
+      if (sim.combo > 1 && phase === "playing") {
+        comboEl.textContent = "×" + sim.combo;
+        comboEl.classList.remove("hidden");
+      } else comboEl.classList.add("hidden");
+      renderLives();
+      bestEl.textContent = String(best);
+    }
+    function showMenu() {
+      overlay.classList.remove("hidden");
+      menuCard.classList.remove("hidden");
+      overCard.classList.add("hidden");
+    }
+    function showOver() {
+      overlay.classList.remove("hidden");
+      menuCard.classList.add("hidden");
+      overCard.classList.remove("hidden");
+      document.getElementById("finalScore").textContent = String(sim.score);
+      document.getElementById("overMeta").textContent = "Best combo " + sim.bestCombo + " · High score " + best;
+    }
+    function startGame() {
+      unlockAudio();
+      sfxStart();
+      sim = freshSim();
+      phase = "playing";
+      overlay.classList.add("hidden");
+      syncHud();
+    }
+
+    document.getElementById("playBtn").onclick = startGame;
+    document.getElementById("againBtn").onclick = startGame;
+    muteBtn.onclick = () => {
+      unlockAudio();
+      muted = !muted;
+      if (master) master.gain.setTargetAtTime(muted ? 0 : 1, audioCtx.currentTime, 0.02);
+      muteBtn.textContent = muted ? "✕" : "♪";
+      muteBtn.setAttribute("aria-label", muted ? "Unmute" : "Mute");
+    };
+
+    window.addEventListener("keydown", (e) => {
+      if (["ArrowLeft","ArrowRight","Space","KeyA","KeyD"].includes(e.code)) e.preventDefault();
+      keys.add(e.code);
+      if ((e.code === "Space" || e.code === "Enter") && phase !== "playing") startGame();
+      if (e.code === "KeyM") muteBtn.click();
+    });
+    window.addEventListener("keyup", (e) => keys.delete(e.code));
+    window.addEventListener("blur", () => keys.clear());
+    document.addEventListener("visibilitychange", () => { if (document.hidden) keys.clear(); else unlockAudio(); });
+
+    function toWorldX(clientX) {
+      const r = canvas.getBoundingClientRect();
+      return ((clientX - r.left) / r.width) * WORLD_W;
+    }
+    canvas.addEventListener("pointerdown", (e) => { if (phase === "playing") pointerX = toWorldX(e.clientX); });
+    canvas.addEventListener("pointermove", (e) => { if (phase === "playing") pointerX = toWorldX(e.clientX); });
+    canvas.addEventListener("pointerup", () => { pointerX = null; });
+    canvas.addEventListener("pointercancel", () => { pointerX = null; });
+
+    function fit() {
+      const rect = wrap.getBoundingClientRect();
+      const scale = Math.min(Math.max(240, rect.width - 16) / WORLD_W, Math.max(320, rect.height - 16) / WORLD_H);
+      const cssW = Math.floor(WORLD_W * scale), cssH = Math.floor(WORLD_H * scale);
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.style.width = cssW + "px";
+      canvas.style.height = cssH + "px";
+      canvas.width = Math.floor(WORLD_W * dpr);
+      canvas.height = Math.floor(WORLD_H * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    new ResizeObserver(fit).observe(wrap);
+    fit();
+
+    function step(dt) {
+      if (phase !== "playing") return;
+      if (sim.hitstop > 0) { sim.hitstop -= dt; return; }
+      sim.elapsed += dt;
+      sim.trauma = Math.max(0, sim.trauma - dt * 2.2);
+      let move = 0;
+      if (keys.has("ArrowLeft") || keys.has("KeyA")) move -= 1;
+      if (keys.has("ArrowRight") || keys.has("KeyD")) move += 1;
+      const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+      for (const pad of pads) {
+        if (!pad) continue;
+        const ax = pad.axes[0] || 0;
+        if (Math.abs(ax) > 0.18) move += ax;
+        if (pad.buttons[14] && pad.buttons[14].pressed) move -= 1;
+        if (pad.buttons[15] && pad.buttons[15].pressed) move += 1;
+      }
+      move = Math.max(-1, Math.min(1, move));
+      if (pointerX != null) sim.paddleTarget = pointerX - sim.paddleW / 2;
+      else sim.paddleTarget += move * 520 * dt;
+      sim.paddleTarget = Math.max(8, Math.min(WORLD_W - sim.paddleW - 8, sim.paddleTarget));
+      sim.paddleX += (sim.paddleTarget - sim.paddleX) * (1 - Math.exp(-18 * dt));
+      sim.spawn -= dt;
+      if (sim.spawn <= 0) { spawnOrb(); sim.spawn = Math.max(0.28, 0.95 - sim.elapsed * 0.018); }
+      const py = WORLD_H - 42, ph = 16;
+      for (let i = sim.orbs.length - 1; i >= 0; i--) {
+        const o = sim.orbs[i];
+        o.y += o.vy * dt; o.pulse += dt * 6;
+        const caught = o.y + o.r >= py && o.y - o.r <= py + ph && o.x + o.r * 0.6 > sim.paddleX && o.x - o.r * 0.6 < sim.paddleX + sim.paddleW;
+        if (caught) {
+          sim.combo += 1;
+          sim.bestCombo = Math.max(sim.bestCombo, sim.combo);
+          sim.score += o.worth * (1 + Math.floor(sim.combo / 5));
+          burst(o.x, py, o.hue, 18);
+          sfxCatch(sim.combo);
+          sim.orbs.splice(i, 1);
+          continue;
+        }
+        if (o.y - o.r > WORLD_H + 8) {
+          sim.combo = 0; sim.lives -= 1;
+          sim.trauma = Math.min(1, sim.trauma + 0.55);
+          sim.hitstop = 0.07;
+          burst(o.x, WORLD_H - 8, 0, 10);
+          sfxMiss();
+          sim.orbs.splice(i, 1);
+          if (sim.lives <= 0) {
+            if (sim.score > best) {
+              best = sim.score;
+              try { localStorage.setItem(SAVE_KEY, JSON.stringify({ version: 1, best })); } catch (e) {}
+            }
+            sfxOver();
+            phase = "over";
+            showOver();
+          }
+        }
+      }
+      for (let i = sim.particles.length - 1; i >= 0; i--) {
+        const p = sim.particles[i];
+        p.life -= dt; p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 220 * dt;
+        if (p.life <= 0) sim.particles.splice(i, 1);
+      }
+      syncHud();
+    }
+
+    function draw() {
+      const shake = sim.trauma * sim.trauma * 10;
+      const ox = (Math.random() * 2 - 1) * shake;
+      const oy = (Math.random() * 2 - 1) * shake;
+      ctx.clearRect(0, 0, WORLD_W, WORLD_H);
+      ctx.save();
+      ctx.translate(ox, oy);
+      const g = ctx.createLinearGradient(0, 0, 0, WORLD_H);
+      g.addColorStop(0, "#07101d"); g.addColorStop(1, "#101a33");
+      ctx.fillStyle = g;
+      ctx.fillRect(-12, -12, WORLD_W + 24, WORLD_H + 24);
+      for (const s of sim.stars) {
+        const a = 0.25 + 0.55 * (0.5 + 0.5 * Math.sin(s.tw + sim.elapsed * 2));
+        ctx.fillStyle = "rgba(232,238,248," + a + ")";
+        ctx.fillRect(s.x, s.y, s.s, s.s);
+      }
+      ctx.strokeStyle = "rgba(62,224,200,0.12)";
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(18, WORLD_H - 58); ctx.lineTo(WORLD_W - 18, WORLD_H - 58); ctx.stroke();
+      for (const o of sim.orbs) {
+        const glow = 0.55 + 0.2 * Math.sin(o.pulse);
+        ctx.beginPath(); ctx.arc(o.x, o.y, o.r + 8, 0, Math.PI * 2);
+        ctx.fillStyle = "hsla(" + o.hue + ", 90%, 62%, " + (0.16 * glow) + ")";
+        ctx.fill();
+        ctx.beginPath(); ctx.arc(o.x, o.y, o.r, 0, Math.PI * 2);
+        const og = ctx.createRadialGradient(o.x - 3, o.y - 4, 2, o.x, o.y, o.r);
+        og.addColorStop(0, "hsla(" + o.hue + ", 90%, 82%, 1)");
+        og.addColorStop(1, "hsla(" + o.hue + ", 85%, 52%, 1)");
+        ctx.fillStyle = og; ctx.fill();
+      }
+      for (const p of sim.particles) {
+        const t = Math.max(0, p.life / p.max);
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.r * t, 0, Math.PI * 2);
+        ctx.fillStyle = "hsla(" + p.hue + ", 90%, 70%, " + t + ")";
+        ctx.fill();
+      }
+      const px = sim.paddleX, py = WORLD_H - 42, pw = sim.paddleW;
+      ctx.shadowColor = "#3ee0c8"; ctx.shadowBlur = 18;
+      ctx.fillStyle = "#3ee0c8";
+      ctx.beginPath(); ctx.roundRect(px, py, pw, 16, 8); ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = "rgba(10,16,32,0.35)";
+      ctx.beginPath(); ctx.roundRect(px + 8, py + 4, pw - 16, 4, 2); ctx.fill();
+      ctx.restore();
+    }
+
+    let acc = 0, last = performance.now();
+    function loop(now) {
+      const raw = Math.min(0.1, (now - last) / 1000);
+      last = now; acc += raw;
+      while (acc >= FIXED_DT) { step(FIXED_DT); acc -= FIXED_DT; }
+      draw();
+      requestAnimationFrame(loop);
+    }
+    requestAnimationFrame(loop);
+    showMenu();
+  </script>
+</body>
+</html>
